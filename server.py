@@ -1,9 +1,9 @@
-import io, os, json, sqlite3, re
+import io, os, json, sqlite3, re, base64, secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -15,6 +15,29 @@ ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / '.env')
 DB = ROOT / 'demo.sqlite3'
 app = FastAPI(title='MAKAN Intelligence V5 - Demo')
+# Basic HTTP authentication for the demo. Configure both values in Render Environment.
+# All paths, including static assets and API endpoints, are protected.
+@app.middleware('http')
+async def require_demo_login(request, call_next):
+ username = os.getenv('APP_USERNAME', '').strip()
+ password = os.getenv('APP_PASSWORD', '')
+ if not username or not password or len(password) < 16:
+  return JSONResponse({'detail':'Demo login is not configured on the server'}, status_code=503)
+ auth = request.headers.get('authorization', '')
+ valid = False
+ if auth.startswith('Basic '):
+  try:
+   decoded = base64.b64decode(auth[6:], validate=True).decode('utf-8')
+   supplied_user, supplied_password = decoded.split(':', 1)
+   valid = secrets.compare_digest(supplied_user.encode(), username.encode()) and secrets.compare_digest(supplied_password.encode(), password.encode())
+  except (ValueError, UnicodeError):
+   pass
+ if not valid:
+  return JSONResponse({'detail':'Authentication required'}, status_code=401, headers={'WWW-Authenticate':'Basic realm="MAKAN Intelligence Demo"', 'Cache-Control':'no-store'})
+ response = await call_next(request)
+ response.headers['Cache-Control'] = 'no-store'
+ return response
+
 app.mount('/static', StaticFiles(directory=ROOT/'static'), name='static')
 MAX_BYTES = 5 * 1024 * 1024
 MAX_TEXT = 50000
